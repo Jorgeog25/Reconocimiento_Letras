@@ -1,4 +1,4 @@
-## python probar_caracter.py pruebas\A.png
+## python probar_caracter.py pruebas\G.png
 
 
 import json

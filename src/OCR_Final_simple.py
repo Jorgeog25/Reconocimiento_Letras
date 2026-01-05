@@ -1,125 +1,119 @@
-## python OCR_Final_simple.py pruebas\hola.png
-
+import os
 import json
 import cv2
 import numpy as np
 import tensorflow as tf
-from utils_preprocess import to_binary
-
-# =============================
-# CARGA DE MODELO Y ETIQUETAS
-# =============================
 
 MODEL_PATH = "models/ocr_cnn.keras"
 LABEL_PATH = "models/label_map.json"
 
-model = tf.keras.models.load_model(MODEL_PATH)
+DEBUG_SAVE = True
+DEBUG_DIR = "debug_out"
 
+model = tf.keras.models.load_model(MODEL_PATH)
 with open(LABEL_PATH, "r", encoding="utf-8") as f:
     label_map = {int(k): v for k, v in json.load(f).items()}
 
-# =============================
-# NORMALIZACIÓN CORRECTA DE CARACTERES
-# =============================
+def to_binary_robust(gray: np.ndarray) -> np.ndarray:
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # asegurar fondo blanco
+    if np.sum(th == 0) > np.sum(th == 255):
+        th = 255 - th
+    return th  # fondo 255, tinta 0
 
-def normalize_char(roi, size=28, margin=4):
-    """
-    Normaliza un carácter para que sea compatible con el entrenamiento:
-    - elimina fondo sobrante
-    - mantiene proporción
-    - centra el carácter
-    - fondo blanco, tinta negra
-    """
-    # eliminar zonas blancas
-    ys, xs = np.where(roi < 255)
-    if len(xs) == 0 or len(ys) == 0:
-        return np.ones((size, size), dtype=np.float32)
-
-    x0, x1 = xs.min(), xs.max()
-    y0, y1 = ys.min(), ys.max()
-    roi = roi[y0:y1+1, x0:x1+1]
-
-    h, w = roi.shape
-    scale = (size - 2 * margin) / max(h, w)
-    new_w = max(1, int(w * scale))
-    new_h = max(1, int(h * scale))
-
-    roi_resized = cv2.resize(roi, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
-    canvas = np.ones((size, size), dtype=np.float32) * 255
-    y_off = (size - new_h) // 2
-    x_off = (size - new_w) // 2
-    canvas[y_off:y_off + new_h, x_off:x_off + new_w] = roi_resized
-
-    canvas = 1.0 - (canvas / 255.0)  # tinta=1, fondo=0
-    return canvas
-
-# =============================
-# SEGMENTACIÓN DE CARACTERES
-# =============================
-
-def find_character_boxes(binary):
+def find_character_boxes(binary: np.ndarray):
     inv = 255 - binary
-    contours, _ = cv2.findContours(
-        inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    inv = cv2.morphologyEx(inv, cv2.MORPH_OPEN, kernel, iterations=1)
+    contours, _ = cv2.findContours(inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     boxes = []
     for c in contours:
         x, y, w, h = cv2.boundingRect(c)
-        area = w * h
-
-        if area < 50:
+        if w*h < 80:  # ruido
             continue
-        if h < 10 or w < 3:
+        if h < 12 or w < 4:
             continue
-
         boxes.append((x, y, w, h))
 
+    boxes.sort(key=lambda b: b[0])
     return boxes
 
-def sort_left_to_right(boxes):
-    return sorted(boxes, key=lambda b: b[0])
+def normalize_char_for_cnn(roi_binary: np.ndarray, size=28, margin=3) -> np.ndarray:
+    # roi_binary: fondo 255, tinta 0
+    ys, xs = np.where(roi_binary < 255)
+    if len(xs) == 0 or len(ys) == 0:
+        return np.zeros((size, size), dtype=np.float32)
 
-# =============================
-# OCR PRINCIPAL
-# =============================
+    x0, x1 = xs.min(), xs.max()
+    y0, y1 = ys.min(), ys.max()
+    roi = roi_binary[y0:y1+1, x0:x1+1]
 
-def ocr_image(image_path):
-    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
+    h, w = roi.shape
+    target = size - 2 * margin
+    scale = target / max(h, w)
+    new_w = max(1, int(round(w * scale)))
+    new_h = max(1, int(round(h * scale)))
+
+    # resize (impreso genera grises)
+    roi_resized = cv2.resize(roi, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+
+    # RE-BINARIZAR tras resize (CRUCIAL)
+    _, roi_resized = cv2.threshold(roi_resized, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # Engrosar un poco para acercarlo a manuscrito/EMNIST
+    ink = 255 - roi_resized
+    k = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    ink = cv2.dilate(ink, k, iterations=1)
+    roi_resized = 255 - ink
+
+    canvas = np.ones((size, size), dtype=np.uint8) * 255
+    y_off = (size - new_h) // 2
+    x_off = (size - new_w) // 2
+    canvas[y_off:y_off+new_h, x_off:x_off+new_w] = roi_resized
+
+    # float tinta=1 fondo=0
+    x28 = 1.0 - (canvas.astype(np.float32) / 255.0)
+    return x28
+
+def ocr_image(image_path: str) -> str:
+    gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if gray is None:
         raise ValueError(f"No se pudo leer la imagen: {image_path}")
 
-    binary = to_binary(img)
-
+    binary = to_binary_robust(gray)
     boxes = find_character_boxes(binary)
-    boxes = sort_left_to_right(boxes)
 
-    result = ""
+    if DEBUG_SAVE:
+        os.makedirs(DEBUG_DIR, exist_ok=True)
+        dbg = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        for (x, y, w, h) in boxes:
+            cv2.rectangle(dbg, (x, y), (x+w, y+h), (0, 0, 255), 1)
+        cv2.imwrite(os.path.join(DEBUG_DIR, "boxes.png"), dbg)
 
-    for x, y, w, h in boxes:
-        roi = binary[y:y + h, x:x + w]
-        x28 = normalize_char(roi)
+    out = []
+    for i, (x, y, w, h) in enumerate(boxes):
+        roi = binary[y:y+h, x:x+w]
+        x28 = normalize_char_for_cnn(roi)
 
-        inp = x28[None, ..., None]  # (1, 28, 28, 1)
-        probs = model.predict(inp, verbose=0)
-        idx = int(np.argmax(probs))
+        if DEBUG_SAVE:
+            # Guardar EXACTAMENTE lo que entra al modelo (en uint8 correcto)
+            img28 = (1.0 - x28) * 255.0
+            img28 = img28.astype(np.uint8)
+            cv2.imwrite(os.path.join(DEBUG_DIR, f"char_{i}.png"), img28)
 
-        result += label_map[idx]
+        inp = x28[None, ..., None]
+        probs = model.predict(inp, verbose=0)[0]
+        out.append(label_map[int(np.argmax(probs))])
 
-    return result
-
-# =============================
-# MAIN
-# =============================
+    return "".join(out)
 
 if __name__ == "__main__":
     import sys
-
     if len(sys.argv) < 2:
         print("Uso: python OCR_Final_simple.py imagen.png")
         raise SystemExit(1)
 
-    texto = ocr_image(sys.argv[1])
     print("\n--- TEXTO RECONOCIDO ---")
-    print(texto)
+    print(ocr_image(sys.argv[1]))
