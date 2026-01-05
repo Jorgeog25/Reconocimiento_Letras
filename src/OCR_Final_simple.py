@@ -1,3 +1,5 @@
+## python OCR_Final_simple.py pruebas\hola.png
+
 import os
 import json
 import cv2
