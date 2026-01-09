@@ -1,11 +1,33 @@
 import cv2
 import numpy as np
 
+
+def to_binary(gray):
+    """
+    Convierte imagen en blanco y negro binaria
+    Fondo blanco, tinta negra
+    """
+    if len(gray.shape) == 3:
+        gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
+
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+
+    binary = cv2.adaptiveThreshold(
+        gray,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31,
+        10
+    )
+    return binary
+
+
 def normalize_28x28(roi, size=28):
     """
-    Normalización OCR robusta:
-    - Mantiene proporciones
-    - Más margen vertical (ñ, i)
+    Normalización robusta para OCR:
+    - conserva proporciones
+    - deja margen para ñ / i
     """
     roi = roi.astype(np.uint8)
 

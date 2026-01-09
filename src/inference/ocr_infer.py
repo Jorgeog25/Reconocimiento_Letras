@@ -3,8 +3,8 @@ import cv2
 import numpy as np
 import tensorflow as tf
 
-from src.preprocessing.segmentation import segment_characters
 from src.preprocessing.preprocess import to_binary, normalize_28x28
+from src.preprocessing.segmentation import segment_characters
 
 
 class OCRInferencer:
@@ -25,58 +25,53 @@ class OCRInferencer:
         binary = to_binary(img)
         boxes = segment_characters(binary)
 
+        # DEBUG: imagen completa
+        debug_img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
         result = []
 
         for i, (x, y, w, h) in enumerate(boxes):
-            pad = 6
-            H, W = binary.shape
+            pad = 4
+            H, W = img.shape
+
             roi = binary[
                 max(0, y-pad):min(H, y+h+pad),
                 max(0, x-pad):min(W, x+w+pad)
             ]
 
-            norm = normalize_28x28(roi)
-            inp = norm[None, ..., None]
+            x28 = normalize_28x28(roi)
+            inp = x28[None, ..., None]
 
             probs = self.model.predict(inp, verbose=0)[0]
-            top = np.argsort(probs)[-2:][::-1]
-
-            c1 = self.idx_to_char[top[0]]
-            c2 = self.idx_to_char[top[1]]
-
-            # Heurística geométrica o / 0
-            ar = w / max(1, h)
-            if {c1, c2} == {"o", "0"}:
-                char = "o" if ar < 0.85 else "0"
-            elif {c1, c2} == {"1", "l"}:
-                char = "l"
-            else:
-                char = c1
-
+            idx = int(np.argmax(probs))
+            char = self.idx_to_char[idx]
             result.append(char)
 
+            # DEBUG visual
             if debug:
-                dbg = cv2.cvtColor(roi, cv2.COLOR_GRAY2BGR)
                 cv2.rectangle(
-                    dbg,
-                    (0, 0),
-                    (dbg.shape[1]-1, dbg.shape[0]-1),
+                    debug_img,
+                    (x, y),
+                    (x+w, y+h),
                     (0, 255, 0),
                     1
                 )
-                cv2.imwrite(f"src/debug_out/roi_{i}.png", dbg)
-                cv2.imwrite(
-                    f"src/debug_out/char_{i}.png",
-                    (norm * 255).astype("uint8")
+                cv2.putText(
+                    debug_img,
+                    char,
+                    (x, y-5),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 0, 255),
+                    1
                 )
 
-        text = "".join(result)
-        return self._fix_context(text)
+                cv2.imwrite(
+                    f"src/debug_out/char_{i}.png",
+                    (x28 * 255).astype("uint8")
+                )
 
-    def _fix_context(self, text):
-        chars = list(text)
-        for i in range(len(chars)):
-            if chars[i] == "0":
-                if (i > 0 and chars[i-1].isalpha()) or (i+1 < len(chars) and chars[i+1].isalpha()):
-                    chars[i] = "o"
-        return "".join(chars)
+        if debug:
+            cv2.imwrite("src/debug_out/debug_word.png", debug_img)
+
+        return "".join(result)
