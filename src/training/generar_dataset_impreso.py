@@ -1,94 +1,56 @@
 import os
-import cv2
-import numpy as np
 import random
-import string
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
-# =============================
-# CONFIGURACIÓN
-# =============================
-OUT_ROOT = "src/data/impreso"
-IMG_SIZE = 64
-N_PER_CLASS = 600   # 400–800 es buen rango
-
-FONTS = [
-    cv2.FONT_HERSHEY_SIMPLEX,
-    cv2.FONT_HERSHEY_PLAIN,
-    cv2.FONT_HERSHEY_DUPLEX,
-    cv2.FONT_HERSHEY_COMPLEX,
-    cv2.FONT_HERSHEY_TRIPLEX,
-    cv2.FONT_HERSHEY_COMPLEX_SMALL,
+FONT_NAMES = [
+    "arial.ttf",
+    "times.ttf",
+    "cour.ttf"
 ]
 
-DIGITS = list("0123456789")
-UPPER = list(string.ascii_uppercase)
-LOWER = list(string.ascii_lowercase)
+CLASSES_NUM = list("0123456789")
+CLASSES_UPPER = list("ABCDEFGHIJKLMNOPQRSTUVWXYZÑ")
+CLASSES_LOWER = list("abcdefghijklmnopqrstuvwxyzñ")
 
 
-# =============================
-# RENDER DE CARÁCTER
-# =============================
-def render_char(ch, img_size=IMG_SIZE):
-    img = np.ones((img_size, img_size), dtype=np.uint8) * 255
+def render_char(ch, size=64):
+    img = Image.new("L", (size, size), 255)
+    draw = ImageDraw.Draw(img)
 
-    font = random.choice(FONTS)
-    scale = random.uniform(1.4, 2.2)
-    thickness = random.randint(2, 4)
+    font_size = random.randint(40, 50)
+    font_name = random.choice(FONT_NAMES)
+    font = ImageFont.truetype(font_name, font_size)
 
-    (tw, th), _ = cv2.getTextSize(ch, font, scale, thickness)
-    x = (img_size - tw) // 2 + random.randint(-2, 2)
-    y = (img_size + th) // 2 + random.randint(-2, 2)
+    bbox = draw.textbbox((0, 0), ch, font=font)
+    w = bbox[2] - bbox[0]
+    h = bbox[3] - bbox[1]
 
-    cv2.putText(img, ch, (x, y), font, scale, (0,), thickness, cv2.LINE_AA)
+    x = (size - w) // 2
+    y = (size - h) // 2 + random.randint(2, 6)
 
-    # pequeñas deformaciones (simula escaneo/foto)
-    angle = random.uniform(-8, 8)
-    M = cv2.getRotationMatrix2D((img_size / 2, img_size / 2), angle, 1.0)
-    img = cv2.warpAffine(img, M, (img_size, img_size), borderValue=255)
-
-    return img
+    draw.text((x, y), ch, font=font, fill=0)
+    return np.array(img)
 
 
-# =============================
-# GENERADOR PRINCIPAL
-# =============================
+def generate_group(chars, out_dir, n=800):
+    os.makedirs(out_dir, exist_ok=True)
+    for ch in chars:
+        folder = os.path.join(out_dir, ch)
+        os.makedirs(folder, exist_ok=True)
+        for i in range(n):
+            img = render_char(ch)
+            Image.fromarray(img).save(
+                os.path.join(folder, f"{ch}_{i:05d}.png")
+            )
+
+
 def main():
-    print("📦 Generando dataset impreso estructurado...")
-
-    # Crear carpetas base
-    for group in ["numeros", "mayusculas", "minusculas"]:
-        os.makedirs(os.path.join(OUT_ROOT, group), exist_ok=True)
-
-    # ---------- NÚMEROS ----------
-    for ch in DIGITS:
-        folder = os.path.join(OUT_ROOT, "numeros", ch)
-        os.makedirs(folder, exist_ok=True)
-
-        for i in range(N_PER_CLASS):
-            img = render_char(ch)
-            cv2.imwrite(os.path.join(folder, f"{ch}_{i:05d}.png"), img)
-
-    # ---------- MAYÚSCULAS ----------
-    for ch in UPPER:
-        folder = os.path.join(OUT_ROOT, "mayusculas", ch)
-        os.makedirs(folder, exist_ok=True)
-
-        for i in range(N_PER_CLASS):
-            img = render_char(ch)
-            cv2.imwrite(os.path.join(folder, f"{ch}_{i:05d}.png"), img)
-
-    # ---------- MINÚSCULAS ----------
-    for ch in LOWER:
-        folder = os.path.join(OUT_ROOT, "minusculas", ch)
-        os.makedirs(folder, exist_ok=True)
-
-        for i in range(N_PER_CLASS):
-            img = render_char(ch)
-            cv2.imwrite(os.path.join(folder, f"{ch}_{i:05d}.png"), img)
-
-    print("✅ Dataset impreso generado correctamente en:")
-    print(f"   {OUT_ROOT}")
-    print("   Estructura: numeros / mayusculas / minusculas")
+    root = "src/data/impreso"
+    generate_group(CLASSES_NUM, os.path.join(root, "numeros"))
+    generate_group(CLASSES_UPPER, os.path.join(root, "mayusculas"))
+    generate_group(CLASSES_LOWER, os.path.join(root, "minusculas"))
+    print("✅ Dataset impreso generado correctamente (Ñ incluida)")
 
 
 if __name__ == "__main__":

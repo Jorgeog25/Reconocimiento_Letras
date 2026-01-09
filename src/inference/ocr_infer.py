@@ -1,91 +1,82 @@
-import os
 import json
 import cv2
 import numpy as np
 import tensorflow as tf
 
-from src.preprocessing.preprocess import to_binary, normalize_28x28
 from src.preprocessing.segmentation import segment_characters
+from src.preprocessing.preprocess import to_binary, normalize_28x28
 
 
 class OCRInferencer:
     def __init__(
         self,
-        model_path: str = "src/models/ocr_cnn.keras",
-        label_map_path: str = "src/models/label_map.json",
+        model_path="src/models/ocr_cnn.keras",
+        label_path="src/models/label_map.json"
     ):
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"No existe el modelo en: {model_path}")
-
-        if not os.path.exists(label_map_path):
-            raise FileNotFoundError(f"No existe label_map en: {label_map_path}")
-
         self.model = tf.keras.models.load_model(model_path)
+        with open(label_path, "r", encoding="utf-8") as f:
+            self.idx_to_char = {int(k): v for k, v in json.load(f).items()}
 
-        with open(label_map_path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-
-        # Por si guardaste el json como {0:"A"} o {"0":"A"}
-        self.idx_to_char = {int(k): v for k, v in raw.items()}
-
-    def predict_image(self, image_path: str, debug: bool = False, debug_dir: str = "src/debug_out") -> str:
-        """
-        Ejecuta OCR sobre una imagen.
-        - Segmenta caracteres
-        - Normaliza a 28x28
-        - Predice con CNN
-        - Devuelve string
-
-        Si debug=True, guarda:
-        - boxes.png con cajas y predicción
-        - char_*.png: las 28x28 que entran al modelo
-        """
+    def predict_image(self, image_path, debug=False):
         img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             raise ValueError(f"No se pudo leer la imagen: {image_path}")
 
-        binary = to_binary(img)  # fondo 255, tinta 0
+        binary = to_binary(img)
         boxes = segment_characters(binary)
 
-        result_chars = []
-
-        if debug:
-            os.makedirs(debug_dir, exist_ok=True)
-            dbg = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
+        result = []
 
         for i, (x, y, w, h) in enumerate(boxes):
-            roi = binary[y:y + h, x:x + w]
+            pad = 6
+            H, W = binary.shape
+            roi = binary[
+                max(0, y-pad):min(H, y+h+pad),
+                max(0, x-pad):min(W, x+w+pad)
+            ]
 
-            # Normaliza a 28x28 con tinta=1, fondo=0 (float)
-            x28 = normalize_28x28(roi)
-
-            # Tensor para el modelo
-            inp = x28[None, ..., None]  # (1,28,28,1)
+            norm = normalize_28x28(roi)
+            inp = norm[None, ..., None]
 
             probs = self.model.predict(inp, verbose=0)[0]
-            idx = int(np.argmax(probs))
-            char = self.idx_to_char.get(idx, "?")
-            result_chars.append(char)
+            top = np.argsort(probs)[-2:][::-1]
+
+            c1 = self.idx_to_char[top[0]]
+            c2 = self.idx_to_char[top[1]]
+
+            # Heurística geométrica o / 0
+            ar = w / max(1, h)
+            if {c1, c2} == {"o", "0"}:
+                char = "o" if ar < 0.85 else "0"
+            elif {c1, c2} == {"1", "l"}:
+                char = "l"
+            else:
+                char = c1
+
+            result.append(char)
 
             if debug:
-                # Dibujar caja y letra
-                cv2.rectangle(dbg, (x, y), (x + w, y + h), (0, 255, 0), 1)
-                cv2.putText(
+                dbg = cv2.cvtColor(roi, cv2.COLOR_GRAY2BGR)
+                cv2.rectangle(
                     dbg,
-                    char,
-                    (x, max(0, y - 5)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0, 0, 255),
-                    2
+                    (0, 0),
+                    (dbg.shape[1]-1, dbg.shape[0]-1),
+                    (0, 255, 0),
+                    1
+                )
+                cv2.imwrite(f"src/debug_out/roi_{i}.png", dbg)
+                cv2.imwrite(
+                    f"src/debug_out/char_{i}.png",
+                    (norm * 255).astype("uint8")
                 )
 
-                # Guardar exactamente la 28x28 que entra al modelo (en uint8)
-                out28 = (1.0 - x28) * 255.0  # volver a "fondo blanco, tinta negra"
-                out28 = np.clip(out28, 0, 255).astype(np.uint8)
-                cv2.imwrite(os.path.join(debug_dir, f"char_{i}.png"), out28)
+        text = "".join(result)
+        return self._fix_context(text)
 
-        if debug:
-            cv2.imwrite(os.path.join(debug_dir, "boxes.png"), dbg)
-
-        return "".join(result_chars)
+    def _fix_context(self, text):
+        chars = list(text)
+        for i in range(len(chars)):
+            if chars[i] == "0":
+                if (i > 0 and chars[i-1].isalpha()) or (i+1 < len(chars) and chars[i+1].isalpha()):
+                    chars[i] = "o"
+        return "".join(chars)
