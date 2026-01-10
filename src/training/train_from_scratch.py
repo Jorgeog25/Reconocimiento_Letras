@@ -23,9 +23,9 @@ os.makedirs("src/models", exist_ok=True)
 # CLASES (DIFERENCIA MAY/MIN)
 # =============================
 # Recomendación: empezar sin ñ/Ñ para evitar problemas de datos insuficientes
-CLASSES = list("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+# CLASSES = list("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
 # Si de verdad tienes datos suficientes, puedes usar:
-# CLASSES = list("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÑabcdefghijklmnopqrstuvwxyzñ")
+CLASSES = list("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÑabcdefghijklmnopqrstuvwxyzñ")
 
 char_to_idx = {c: i for i, c in enumerate(CLASSES)}
 num_classes = len(CLASSES)
