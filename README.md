@@ -1,5 +1,8 @@
 # OCR con Red Neuronal Convolucional (CNN)
 
++ [Documento](./docs/OCR%20con%20Red%20Neuronal%20Convolucional.pdf)
++ [Video](https://drive.google.com/file/d/1_hKUdcG9vlW9OvcEe6_rIXbeknfx-lTL/view?usp=drive_link)
+
 ## Código y entorno de ejecución
 
 El proyecto se ha desarrollado íntegramente en **Python**, utilizando archivos ejecutables (`.py`) organizados en un entorno de desarrollo estándar (IDE).  
